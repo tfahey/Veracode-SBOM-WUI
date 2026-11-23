@@ -32,103 +32,86 @@ This document outlines a phased approach to implement all requirements from TASK
 
 ---
 
-## Phase 1: Foundation & Shell Safety
+## Phase 1: Foundation & Shell Safety + Argument Parsing
 
-**Goal:** Establish fail-fast shell settings and error handling without changing logic or return value handling.
+**Goal:** Establish shell safety, error handling, and argument parsing without changing logic or return value handling.
 
 ### Changes
 - Add `#!/usr/bin/env bash` shebang
-- Add `set -Eeuo pipefail` for fail-fast
-- Add `IFS=$'\n\t'` for safe word splitting
-- Add error handling functions: `usage()`, `die()`, `require_command()`
+- Add `IFS=$'\n\t'` for safe word splitting (note: `set -Eeuo pipefail` attempted but reverted—`set -u` breaks `select_option()`)
+- Add error handling functions: `usage()`, `die()`, `require_command()`, `cleanup_terminal()`
+- Add `check_dependencies()` for http, jq, stty, python3 validation
 - Add trap setup for cleanup on INT/TERM signals
-- Add `cleanup_terminal()` to restore cursor/echo
-- Extract `SCRIPT_DIR` and define `OUTPUT_DIR` constants
-- Add `check_dependencies()` for http, jq, stty validation
-- Fix syntax error on line 214: `elif "$choice"` → `elif [ "$choice" ]`
-- Add `DEBUG` environment variable support
+- Extract `SCRIPT_DIR` and define `OUTPUT_DIR`, `VERACODE_API_BASE` constants
+- Add `DEBUG` environment variable support with initialization
+- Fix syntax errors: `elif "$choice"` → `elif [ "$choice" ]; then` (lines 243, 331)
+- Fix typos: `Choosen` → `Chosen`, `Prfoile` → `Profile`
+- Add `parse_arguments()` function with `--profile`, `--debug`, `--help` support
+- Add `VERACODE_API_PROFILE` environment variable support with precedence logic (CLI arg overrides env var)
+- Export `VERACODE_API_PROFILE` for use by `veracode-http` integration
 
 ### Critical Constraint
 **Do NOT change `select_option()` function's return mechanism** - it must continue using `return $index`
 
 ### Test Coverage
 - Menu navigation works (up/down/enter)
-- Both SBOM generation paths work
+- Both SBOM generation paths work (application and agent)
 - Ctrl+C restores terminal cleanly
 - Application and agent SBOMs generate valid JSON
+- `--profile` flag recognized and stored
+- `VERACODE_API_PROFILE` environment variable fallback works
+- Profile precedence correct (CLI > env var > default)
+- `--help` flag displays usage
+- `--debug` flag enables debug output
+- Unknown arguments rejected with usage help
 - bash -n and shellcheck pass
 
-### Commits
-- `P1-01: Shebang and fail-fast settings`
-- `P1-02: Error handling and trap setup`
-- `P1-03: Constants and dependency checks`
-- `P1-04: Fix conditional syntax error`
+### Commits (Completed)
+- `d48e71b` - P1-01: Add shebang, error handling, and fix conditional syntax
+- `4e6bac1` - P1-02: Add constants and dependency checks
+- `e8242e7` - P1-03: Add usage and argument parsing
+- `41227a1` - P1-04: Fix typos and configure IFS for safe word splitting
+
+**Phase 1 Status: ✓ COMPLETE**
 
 ---
 
-## Phase 2: Argument Parsing & Profile Support
+## Phase 2: Code Structure & Function Refactoring
 
-**Goal:** Add `--profile` and `VERACODE_API_PROFILE` support without breaking default behavior.
+**Goal:** Extract helper functions to reduce duplication and improve testability without changing behavior. (Note: Argument parsing completed in Phase 1, so this phase focuses on refactoring existing code.)
 
 ### Changes
-- Implement `parse_arguments()` function for `--profile`, `--debug`, `--help` flags
-- Support `VERACODE_API_PROFILE` environment variable fallback
-- Pass selected profile to `veracode-http` via `VERACODE_API_PROFILE` export
-- Validate profile argument is non-empty
-- Reject unknown arguments with usage help
-- Add argument parsing to `main()` entry point
-- Update `usage()` with profile examples and credential file guidance
+- Extract `fetch_json()` - wrapper for `veracode-http` with error handling
+- Extract `load_applications()` - fetch and parse applications (using existing grep/cut, not jq yet)
+- Extract `load_workspaces()` - fetch and parse workspaces
+- Extract `load_projects()` - fetch projects for a workspace
+- Extract `generate_application_sbom()` - generate application SBOM with proper error handling
+- Extract `generate_agent_sbom()` - generate agent-based SBOM with proper error handling
+- Replace hardcoded variable names (`my_array`, `my_arrayy`, `idoutput`, `nameoutput`) with descriptive names
+- Create `main()` function to orchestrate all phases
 
 ### No Changes To
 - `select_option()` function - return mechanism stays identical
-- Application or agent SBOM generation logic
+- Argument parsing (completed in Phase 1)
 - Menu behavior
-
-### Test Coverage
-- Works without `--profile` (default behavior preserved)
-- `./SBOM-Gen.sh --profile production` recognizes profile
-- `VERACODE_API_PROFILE=prod ./SBOM-Gen.sh` recognizes env var
-- `--profile` overrides `VERACODE_API_PROFILE`
-- All baseline functionality still works
-
-### Commits
-- `P2-01: Add parse_arguments() function`
-- `P2-02: Implement profile support and precedence`
-- `P2-03: Update usage and documentation`
-
----
-
-## Phase 3: Code Structure & Function Refactoring
-
-**Goal:** Extract helper functions to reduce duplication and improve testability without changing behavior.
-
-### New Functions
-- `fetch_json()` - wrapper for `veracode-http` with error handling
-- `load_applications()` - fetch and parse applications (using existing grep/cut, not jq yet)
-- `load_workspaces()` - fetch and parse workspaces
-- `load_projects()` - fetch projects for a workspace
-- `generate_application_sbom()` - generate application SBOM
-- `generate_agent_sbom()` - generate agent-based SBOM
-
-### No Changes To
-- JSON extraction methods (still use grep/cut, not jq)
-- Menu behavior
-- Argument parsing
+- JSON extraction methods (still use grep/cut, not jq yet)
 
 ### Test Coverage
 - Functions can be called independently
 - Error handling is preserved
 - All baseline functionality still works
+- Both SBOM generation paths work
+- Menu navigation unchanged
 
 ### Commits
-- `P3-01: Extract fetch_json() helper`
-- `P3-02: Extract load_applications() and load_workspaces()`
-- `P3-03: Extract load_projects() and generation functions`
-- `P3-04: Refactor main() to use extracted functions`
+- `P2-01: Extract fetch_json() helper`
+- `P2-02: Extract load_applications() and load_workspaces()`
+- `P2-03: Extract load_projects() and generation functions`
+- `P2-04: Refactor main() to use extracted functions`
 
 ---
 
-## Phase 4: JSON Extraction Modernization
+## Phase 3: JSON Extraction Modernization
 
 **Goal:** Replace fragile grep/cut parsing with robust jq paired arrays.
 
@@ -155,14 +138,14 @@ This document outlines a phased approach to implement all requirements from TASK
 - All baseline functionality still works
 
 ### Commits
-- `P4-01: Add jq-based extraction helper functions`
-- `P4-02: Migrate application extraction to jq with paired arrays`
-- `P4-03: Migrate workspace and project extraction to jq`
-- `P4-04: Add paired-array safety validation`
+- `P3-01: Add jq-based extraction helper functions`
+- `P3-02: Migrate application extraction to jq with paired arrays`
+- `P3-03: Migrate workspace and project extraction to jq`
+- `P3-04: Add paired-array safety validation`
 
 ---
 
-## Phase 5: Menu Improvements & Terminal Handling
+## Phase 4: Menu Improvements & Terminal Handling
 
 **Goal:** Improve `select_option()` reliability while preserving menu behavior.
 
@@ -170,7 +153,6 @@ This document outlines a phased approach to implement all requirements from TASK
 - Use fixed-format `printf` strings (no interpolation)
 - Improve terminal state restoration reliability
 - Replace `((idx++))` patterns with safe alternatives
-- Fix typos: "Choosen" → "Chosen", "Prfoile" → "Profile"
 - Ensure proper cursor blink restoration
 - Ensure proper echo restoration on Ctrl+C
 - Support safe return code handling in `select_option()`
@@ -185,14 +167,13 @@ This document outlines a phased approach to implement all requirements from TASK
 - Ctrl+C handling works
 
 ### Commits
-- `P5-01: Improve printf formatting in select_option()`
-- `P5-02: Enhance terminal state restoration`
-- `P5-03: Fix menu selection return handling`
-- `P5-04: Fix typos in output messages`
+- `P4-01: Improve printf formatting in select_option()`
+- `P4-02: Enhance terminal state restoration`
+- `P4-03: Fix menu selection return handling`
 
 ---
 
-## Phase 6: Path Safety & Filename Validation
+## Phase 5: Path Safety & Filename Validation
 
 **Goal:** Secure API ID usage and prevent injection attacks.
 
@@ -211,13 +192,13 @@ This document outlines a phased approach to implement all requirements from TASK
 - All baseline functionality still works
 
 ### Commits
-- `P6-01: Add ID validation for safe characters`
-- `P6-02: Quote URLs and paths consistently`
-- `P6-03: Update filename formats per spec`
+- `P5-01: Add ID validation for safe characters`
+- `P5-02: Quote URLs and paths consistently`
+- `P5-03: Update filename formats per spec`
 
 ---
 
-## Phase 7: Documentation & Help
+## Phase 6: Documentation & Help
 
 **Goal:** Update documentation to reflect all changes.
 
@@ -238,12 +219,12 @@ This document outlines a phased approach to implement all requirements from TASK
 - Examples all work as documented
 
 ### Commits
-- `P7-01: Update README with installation and usage`
-- `P7-02: Add code comments for complex sections`
+- `P6-01: Update README with installation and usage`
+- `P6-02: Add code comments for complex sections`
 
 ---
 
-## Phase 8: Final Validation
+## Phase 7: Final Validation
 
 **Goal:** Comprehensive validation of all functionality.
 
@@ -301,8 +282,8 @@ Debug Mode:
 - Validate no credentials are exposed
 
 ### Commits
-- `P8-01: Add comprehensive test suite`
-- `P8-02: Final validation and cleanup`
+- `P7-01: Add comprehensive test suite`
+- `P7-02: Final validation and cleanup`
 
 ---
 
@@ -323,14 +304,14 @@ Debug Mode:
 
 ## Timeline Estimate
 
-- **P1:** 1-2 hours (foundation is straightforward)
-- **P2:** 1-2 hours (profile support is well-scoped)
-- **P3:** 2-3 hours (refactoring with testing)
-- **P4:** 4-5 hours (most complex; highest risk; needs extensive testing)
-- **P5:** 2-3 hours (menu improvements; terminal testing)
-- **P6:** 1-2 hours (validation and security)
-- **P7:** 1 hour (documentation)
-- **P8:** 2-3 hours (comprehensive validation)
+- **P1:** ✓ COMPLETE (foundation + argument parsing implemented)
+- **P2:** 2-3 hours (refactoring with testing)
+- **P3:** 4-5 hours (JSON modernization; highest risk; needs extensive testing)
+- **P4:** 2-3 hours (menu improvements; terminal testing)
+- **P5:** 1-2 hours (path safety and validation)
+- **P6:** 1 hour (documentation updates)
+- **P7:** 2-3 hours (comprehensive validation)
 
-**Total: 14-21 hours of focused development**
+**Total Remaining: 13-17 hours of focused development**
+**Total Completed: ~3-4 hours (Phase 1)**
 
