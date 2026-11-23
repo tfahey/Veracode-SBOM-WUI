@@ -107,6 +107,26 @@ function select_option {
 #
 ##################################################################
 
+usage() {
+	cat <<EOF
+Usage: $0 [OPTIONS]
+
+SBOM Generator using Veracode SCA Information
+
+OPTIONS:
+  -p, --profile NAME              Use credential profile NAME
+  -h, --help                      Show this help message
+  --debug                         Enable debug output
+
+EXAMPLES:
+  $0
+  $0 --profile production
+  VERACODE_API_PROFILE=production $0
+
+For more information, see README.md
+EOF
+}
+
 die() {
 	local msg="$1"
 	echo "Error: $msg" >&2
@@ -142,15 +162,63 @@ setup_trap() {
 	trap 'cleanup_terminal; exit 130' INT TERM
 }
 
+parse_arguments() {
+	local profile=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			-p | --profile)
+				profile="$2"
+				if [[ -z "$profile" ]]; then
+					die "Option $1 requires a non-empty argument"
+				fi
+				shift 2
+				;;
+			--debug)
+				DEBUG=1
+				shift
+				;;
+			-h | --help)
+				usage
+				exit 0
+				;;
+			-*)
+				die "Unknown option: $1"
+				;;
+			*)
+				die "Unexpected argument: $1"
+				;;
+		esac
+	done
+
+	if [[ -z "$profile" ]]; then
+		profile="${VERACODE_API_PROFILE:-}"
+	fi
+
+	if [[ -n "$profile" ]]; then
+		export VERACODE_API_PROFILE="$profile"
+		if [[ "$DEBUG" == "1" ]]; then
+			echo "Using credential profile: $profile" >&2
+		fi
+	fi
+}
+
 ##################################################################
 #
 # Main script execution
 #
 ##################################################################
 
+parse_arguments "$@"
 check_dependencies
 setup_trap
 initialize_output_dir
+
+if [[ "$DEBUG" == "1" ]]; then
+	echo "SBOM Generator v$VERSION" >&2
+	echo "Output directory: $OUTPUT_DIR" >&2
+fi
+
 clear
 
 #pip install httpie
