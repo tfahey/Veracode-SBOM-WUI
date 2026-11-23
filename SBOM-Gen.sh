@@ -207,6 +207,148 @@ parse_arguments() {
 
 ##################################################################
 #
+# API and data loading functions
+#
+##################################################################
+
+load_applications() {
+	local json_file="$OUTPUT_DIR/applications.json"
+	local app_ids=()
+	local app_names=()
+
+	http --auth-type=veracode_hmac -o "$json_file" "$VERACODE_API_BASE/appsec/v1/applications" || die "Failed to fetch: $VERACODE_API_BASE/appsec/v1/applications"
+
+	local idoutput
+	idoutput=$(cat "$json_file" | jq -r '._embedded.applications[].guid' )
+
+	while IFS= read -r line; do
+		app_ids+=("$line")
+	done <<< "$idoutput"
+
+	if [[ "$DEBUG" == "1" ]]; then
+		echo "Application IDs:" >&2
+		for id in "${app_ids[@]}"; do
+			echo "  $id" >&2
+		done
+	fi
+
+	local nameoutput
+	nameoutput=$(cat "$json_file" | jq -r '._embedded.applications[].profile.name')
+
+	while IFS= read -r line; do
+		app_names+=("$line")
+	done <<< "$nameoutput"
+
+	if [[ "$DEBUG" == "1" ]]; then
+		echo "Application names:" >&2
+		for name in "${app_names[@]}"; do
+			echo "  $name" >&2
+		done
+	fi
+
+	printf '%s\n' "${app_ids[@]}" > "$OUTPUT_DIR/.app_ids.tmp"
+	printf '%s\n' "${app_names[@]}" > "$OUTPUT_DIR/.app_names.tmp"
+}
+
+load_workspaces() {
+	local json_file="$OUTPUT_DIR/workspaces.json"
+	local workspace_ids=()
+	local workspace_names=()
+
+	http --auth-type=veracode_hmac -o "$json_file" "$VERACODE_API_BASE/srcclr/v3/workspaces" || die "Failed to fetch: $VERACODE_API_BASE/srcclr/v3/workspaces"
+
+	local idoutput
+	idoutput=$(cat "$json_file" | jq -r '._embedded.workspaces' | grep -i '"id":' | cut -d '"' -f4)
+
+	while IFS= read -r line; do
+		workspace_ids+=("$line")
+	done <<< "$idoutput"
+
+	if [[ "$DEBUG" == "1" ]]; then
+		echo "Workspace IDs:" >&2
+		for id in "${workspace_ids[@]}"; do
+			echo "  $id" >&2
+		done
+	fi
+
+	local nameoutput
+	nameoutput=$(cat "$json_file" | jq -r '._embedded.workspaces' | grep -i '"name":' | cut -d '"' -f4)
+
+	while IFS= read -r line; do
+		workspace_names+=("$line")
+	done <<< "$nameoutput"
+
+	if [[ "$DEBUG" == "1" ]]; then
+		echo "Workspace names:" >&2
+		for name in "${workspace_names[@]}"; do
+			echo "  $name" >&2
+		done
+	fi
+
+	printf '%s\n' "${workspace_ids[@]}" > "$OUTPUT_DIR/.workspace_ids.tmp"
+	printf '%s\n' "${workspace_names[@]}" > "$OUTPUT_DIR/.workspace_names.tmp"
+}
+
+load_projects() {
+	local workspace_id="$1"
+	local json_file="$OUTPUT_DIR/projects.json"
+	local project_ids=()
+	local project_names=()
+
+	http --auth-type=veracode_hmac -o "$json_file" "$VERACODE_API_BASE/srcclr/v3/workspaces/$workspace_id/projects?type=agent" || die "Failed to fetch projects for workspace"
+
+	if [[ "$DEBUG" == "1" ]]; then
+		cat "$json_file" | jq -r '._embedded.projects' | grep -i '"name":' -F | cut -d '"' -f4
+	fi
+
+	local idoutput
+	idoutput=$(cat "$json_file" | jq -r '._embedded.projects' | grep -i '"id":' | cut -d '"' -f4)
+
+	while IFS= read -r line; do
+		project_ids+=("$line")
+	done <<< "$idoutput"
+
+	if [[ "$DEBUG" == "1" ]]; then
+		echo "Project IDs:" >&2
+		for id in "${project_ids[@]}"; do
+			echo "  $id" >&2
+		done
+	fi
+
+	local nameoutput
+	nameoutput=$(cat "$json_file" | jq -r '._embedded.projects' | grep -i '"name":' | cut -d '"' -f4)
+
+	while IFS= read -r line; do
+		project_names+=("$line")
+	done <<< "$nameoutput"
+
+	if [[ "$DEBUG" == "1" ]]; then
+		echo "Project names:" >&2
+		for name in "${project_names[@]}"; do
+			echo "  $name" >&2
+		done
+	fi
+
+	printf '%s\n' "${project_ids[@]}" > "$OUTPUT_DIR/.project_ids.tmp"
+	printf '%s\n' "${project_names[@]}" > "$OUTPUT_DIR/.project_names.tmp"
+}
+
+generate_application_sbom() {
+	local app_id="$1"
+
+	http --auth-type=veracode_hmac -o "$OUTPUT_DIR/$app_id.json" "$VERACODE_API_BASE/srcclr/sbom/v1/targets/$app_id/cyclonedx?type=application" || die "Failed to generate SBOM for application"
+	echo "CycloneDx SBOM written to $OUTPUT_DIR/$app_id.json"
+}
+
+generate_agent_sbom() {
+	local project_id="$1"
+
+	http --auth-type=veracode_hmac -o "$OUTPUT_DIR/$project_id.json" "$VERACODE_API_BASE/srcclr/sbom/v1/targets/$project_id/cyclonedx?type=agent" || die "Failed to generate SBOM for project"
+	echo "CycloneDx SBOM written to $OUTPUT_DIR/$project_id.json"
+}
+
+##################################################################
+#
 # Main script execution
 #
 ##################################################################
@@ -241,263 +383,104 @@ echo "Chosen index = $choice"
 echo "        value = ${sbom_type_options[$choice]}"
 
 if [ "$choice" == "0" ]; then
-    echo "Application Profile SBOM"
+	echo "Application Profile SBOM"
 
-        
-    # Run the piped commands and store the output in a variable
-    veracode-http -o $OUTPUT_DIR/applications.json "https://api.veracode.com/appsec/v1/applications"
-    idoutput=$(cat $OUTPUT_DIR/applications.json | jq -r '._embedded.applications[].guid' )
+	load_applications
 
-    # Initialize an empty Bash array
-    my_array=()
+	app_ids=()
+	while IFS= read -r line; do
+		app_ids+=("$line")
+	done < "$OUTPUT_DIR/.app_ids.tmp"
 
-    # Use a while read loop to populate the array
-    while IFS= read -r line; do
-        my_array+=("$line")
-    done <<< "$idoutput"
+	app_names=()
+	while IFS= read -r line; do
+		app_names+=("$line")
+	done < "$OUTPUT_DIR/.app_names.tmp"
 
-    if [ "$DEBUG" == "1" ]; then
+	options=()
+	for i in "${!app_names[@]}"; do
+		options+=("${app_names[$i]} : ${app_ids[$i]}")
+	done
 
-            # Print the populated array
-            echo "Populated Array:"
-            for element in "${my_array[@]}"; do
-                echo "$element"
-            done
-    fi
+	echo "Select an application"
+	echo "Select one option using up/down keys and enter to confirm:"
+	echo
 
-    # Run the piped commands and store the output in a variable
-    nameoutput=$(cat $OUTPUT_DIR/applications.json | jq -r '._embedded.applications[].profile.name')
+	select_option "${options[@]}"
+	app_choice=$?
 
-    # Initialize an empty Bash array
-    my_arrayy=()
+	echo "Chosen index = $app_choice"
+	echo "        value = ${options[$app_choice]}"
 
-    # Use a while read loop to populate the array
-    while IFS= read -r line; do
-        my_arrayy+=("$line")
-    done <<< "$nameoutput"
+	generate_application_sbom "${app_ids[$app_choice]}"
 
-    if [ "$DEBUG" == "1" ]; then
-
-            # Print the populated array
-            echo "Populated Array:"
-            for element in "${my_arrayy[@]}"; do
-                echo "$element"
-            done
-    fi
-
-    options=()
-    # Print the populated array
-    #echo "Populated Array:"
-    i=0
-
-    #if [ "$DEBUG" == "1" ]; then
-
-            for element in "${my_arrayy[@]}"; do
-                #echo "$element : ${my_array[i]}"
-                options+=("$element : ${my_array[i]}")
-                i=$((i + 1 ))
-            done
-    #fi
-    #echo $i
-
-
-    ##################################################################
-    #
-    #  Select an application
-    # ( array populated before the function )
-    ###################################################################
-
-
-
-    echo "Select an application"
-    echo "Select one option using up/down keys and enter to confirm:"
-    echo
-
-
-    select_option "${options[@]}"
-    choice=$?
-
-    echo "Chosen index = $choice"
-    echo "        value = ${options[$choice]}"
-
-
-
-    # populate the next set of options array
-
-    veracode-http -o $OUTPUT_DIR/"${my_array[$choice]}" "https://api.veracode.com/srcclr/sbom/v1/targets/${my_array[$choice]}/cyclonedx?type=application"
-    echo "CycloneDx SBOM written to $OUTPUT_DIR/${my_array[$choice]}.json"
-    #cd -f
+	rm -f "$OUTPUT_DIR/.app_ids.tmp" "$OUTPUT_DIR/.app_names.tmp"
 
 elif [ "$choice" == "1" ]; then
-    echo "Agent Based SBOM"
-        
-    # Run the piped commands and store the output in a variable
-    veracode-http -o $OUTPUT_DIR/workspaces.json "https://api.veracode.com/srcclr/v3/workspaces"
-    idoutput=$(cat $OUTPUT_DIR/workspaces.json | jq -r '._embedded.workspaces' | grep -i '"id":' | cut -d '"' -f4)
+	echo "Agent Based SBOM"
 
-    # Initialize an empty Bash array
-    my_array=()
+	load_workspaces
 
-    # Use a while read loop to populate the array
-    while IFS= read -r line; do
-        my_array+=("$line")
-    done <<< "$idoutput"
+	workspace_ids=()
+	while IFS= read -r line; do
+		workspace_ids+=("$line")
+	done < "$OUTPUT_DIR/.workspace_ids.tmp"
 
-    if [ "$DEBUG" == "1" ]; then
+	workspace_names=()
+	while IFS= read -r line; do
+		workspace_names+=("$line")
+	done < "$OUTPUT_DIR/.workspace_names.tmp"
 
-            # Print the populated array
-            echo "Populated Array:"
-            for element in "${my_array[@]}"; do
-                echo "$element"
-            done
-    fi
+	options=()
+	for i in "${!workspace_names[@]}"; do
+		options+=("${workspace_names[$i]} : ${workspace_ids[$i]}")
+	done
 
-    # Run the piped commands and store the output in a variable
-    nameoutput=$(cat $OUTPUT_DIR/workspaces.json | jq -r '._embedded.workspaces' | grep -i '"name":' | cut -d '"' -f4)
+	echo "Select a workspace"
+	echo "Select one option using up/down keys and enter to confirm:"
+	echo
 
-    # Initialize an empty Bash array
-    my_arrayy=()
+	select_option "${options[@]}"
+	workspace_choice=$?
 
-    # Use a while read loop to populate the array
-    while IFS= read -r line; do
-        my_arrayy+=("$line")
-    done <<< "$nameoutput"
+	echo "Chosen index = $workspace_choice"
+	echo "        value = ${options[$workspace_choice]}"
 
-    if [ "$DEBUG" == "1" ]; then
+	load_projects "${workspace_ids[$workspace_choice]}"
 
-            # Print the populated array
-            echo "Populated Array:"
-            for element in "${my_arrayy[@]}"; do
-                echo "$element"
-            done
-    fi
+	project_ids=()
+	while IFS= read -r line; do
+		project_ids+=("$line")
+	done < "$OUTPUT_DIR/.project_ids.tmp"
 
-    options=()
-    # Print the populated array
-    #echo "Populated Array:"
-    i=0
+	project_names=()
+	while IFS= read -r line; do
+		project_names+=("$line")
+	done < "$OUTPUT_DIR/.project_names.tmp"
 
-    #if [ "$DEBUG" == "1" ]; then
+	options=()
+	for i in "${!project_names[@]}"; do
+		if [[ -z "${project_names[$i]}" ]]; then
+			echo "No Project Found"
+			continue
+		fi
+		options+=("${project_names[$i]} : ${project_ids[$i]}")
+	done
 
-            for element in "${my_arrayy[@]}"; do
-                #echo "$element : ${my_array[i]}"
-                options+=("$element : ${my_array[i]}")
-                i=$((i + 1 ))
-            done
-    #fi
-    #echo $i
+	if [[ ${#options[@]} -eq 0 ]]; then
+		die "No projects found in workspace"
+	fi
 
+	echo "Select a project"
 
-    ##################################################################
-    #
-    #  Select a workspace
-    # ( array populated before the function )
-    ###################################################################
+	select_option "${options[@]}"
+	project_choice=$?
 
+	echo "Chosen index = $project_choice"
+	echo "        value = ${options[$project_choice]}"
 
+	generate_agent_sbom "${project_ids[$project_choice]}"
 
-    echo "Select a workspace"
-    echo "Select one option using up/down keys and enter to confirm:"
-    echo
-
-
-    select_option "${options[@]}"
-    choice=$?
-
-    echo "Chosen index = $choice"
-    echo "        value = ${options[$choice]}"
-
-
-
-    # populate the next set of options array
-
-    veracode-http -o $OUTPUT_DIR/projects.json "https://api.veracode.com/srcclr/v3/workspaces/${my_array[$choice]}/projects?type=agent"
-
-    if [ "$DEBUG" == "1" ]; then
-
-    cat $OUTPUT_DIR/projects.json | jq -r '._embedded.projects' | grep -i '"name":' -F | cut -d '"' -f4
-
-    fi
-
-    # Run the piped commands and store the output in a variable
-    idoutput=$(cat $OUTPUT_DIR/projects.json | jq -r '._embedded.projects' | grep -i '"id":' | cut -d '"' -f4)
-
-    # Initialize an empty Bash array
-    my_array=()
-
-
-
-    # Use a while read loop to populate the array
-    while IFS= read -r line; do
-        my_array+=("$line")
-    done <<< "$idoutput"
-
-
-    if [ "$DEBUG" == "1" ]; then
-            # Print the populated array
-            echo "Populated Array:"
-            for element in "${my_array[@]}"; do
-                echo "$element"
-            done
-
-    fi
-
-    # Run the piped commands and store the output in a variable
-    nameoutput=$(cat $OUTPUT_DIR/projects.json | jq -r '._embedded.projects' | grep -i '"name":' | cut -d '"' -f4)
-
-    # Initialize an empty Bash array
-    my_arrayy=()
-
-    # Use a while read loop to populate the array
-    while IFS= read -r line; do
-        my_arrayy+=("$line")
-    done <<< "$nameoutput"
-
-
-    if [ "$DEBUG" == "1" ]; then
-
-            # Print the populated array
-            echo "Populated Array:"
-            for element in "${my_arrayy[@]}"; do
-                echo "$element"
-            done
-    fi
-    options=()
-    # Print the populated array
-
-    #echo "Populated Array:"
-    i=0
-    for element in "${my_arrayy[@]}"; do
-        #echo "$element : ${my_array[i]}"
-        if [ "$element" == "" ]; then
-            echo "No Project Found"
-            continue
-        fi
-        options+=("$element : ${my_array[i]}")
-        i=$((i + 1))
-    done
-    #echo "i:" $i
-    if [ "$i" == "0" ]; then
-            exit 1
-    fi
-
-    echo "Select a project"
-
-    select_option "${options[@]}"
-    choice=$?
-
-    echo "Chosen index = $choice"
-    echo "        value = ${options[$choice]}"
-
-    #####################################################################
-    #
-    # Generate Agent Based SBOM
-    #
-    ######################################################################
-
-
-    veracode-http -o $OUTPUT_DIR/"${my_array[$choice]}".json "https://api.veracode.com/srcclr/sbom/v1/targets/${my_array[$choice]}/cyclonedx?type=agent"
-
-    echo "CycloneDx SBOM written to $OUTPUT_DIR/${my_array[$choice]}.json"
-    #cd -f
+	rm -f "$OUTPUT_DIR/.workspace_ids.tmp" "$OUTPUT_DIR/.workspace_names.tmp"
+	rm -f "$OUTPUT_DIR/.project_ids.tmp" "$OUTPUT_DIR/.project_names.tmp"
 fi
