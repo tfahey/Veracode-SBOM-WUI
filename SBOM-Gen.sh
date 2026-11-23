@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #  Author: Ben Halpern
 #  Version: v2.1.2 
 #  Veracode 2024
@@ -96,6 +96,41 @@ function select_option {
     return $selected
 }
 
+##################################################################
+#
+# Error handling and utility functions
+#
+##################################################################
+
+die() {
+	local msg="$1"
+	echo "Error: $msg" >&2
+	exit 1
+}
+
+cleanup_terminal() {
+	printf "\033[?25h"
+	stty echo 2>/dev/null || true
+}
+
+require_command() {
+	local cmd="$1"
+	if ! command -v "$cmd" &>/dev/null; then
+		die "Required command not found: $cmd"
+	fi
+}
+
+check_dependencies() {
+	require_command "http"
+	require_command "jq"
+	require_command "stty"
+}
+
+##################################################################
+#
+# Main script execution
+#
+##################################################################
 
 if cd .sbom ; then
         clear
@@ -211,7 +246,7 @@ if [ "$choice" == "0" ]; then
     echo "CycloneDx SBOM written to .sbom/${my_array[$choice]}.json"
     #cd -f
 
-elif "$choice" == "1"; then
+elif [ "$choice" == "1" ]; then
     echo "Agent Based SBOM"
         
     # Run the piped commands and store the output in a variable
