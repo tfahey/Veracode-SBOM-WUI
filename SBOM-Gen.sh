@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 #  Author: Ben Halpern
-#  Version: v2.1.2 
+#  Version: v2.1.2
 #  Veracode 2024
-#  LICENSE: MIT 
+#  LICENSE: MIT
 #  SBOM Utility to generate an SBOM using Veracode SCA Information from an Upload and Scan or Agent-Based Scan
 #  Inspired by the work done by:
 #    Alexander Klimetschek : https://unix.stackexchange.com/questions/146570/arrow-key-enter-menu
 #    gilmore867 : https://github.com/gilmore867/Veracode-SBOM-GUI
 # This version does not use docker containers
-VERSION="v2.1.2"
+
+readonly VERSION="v2.1.2"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly OUTPUT_DIR="${SCRIPT_DIR}/.sbom"
+readonly VERACODE_API_BASE="https://api.veracode.com"
+DEBUG="${DEBUG:-0}"
 
 
 ##################################################################
@@ -124,6 +129,17 @@ check_dependencies() {
 	require_command "http"
 	require_command "jq"
 	require_command "stty"
+	require_command "python3"
+}
+
+initialize_output_dir() {
+	if [[ ! -d "$OUTPUT_DIR" ]]; then
+		mkdir -p "$OUTPUT_DIR" || die "Failed to create output directory: $OUTPUT_DIR"
+	fi
+}
+
+setup_trap() {
+	trap 'cleanup_terminal; exit 130' INT TERM
 }
 
 ##################################################################
@@ -132,14 +148,10 @@ check_dependencies() {
 #
 ##################################################################
 
-if cd .sbom ; then
-        clear
-        cd -
-else
-        clear
-        mkdir .sbom
-        #cd .sbom
-fi
+check_dependencies
+setup_trap
+initialize_output_dir
+clear
 
 #pip install httpie
 #pip install veracode-api-signing
@@ -163,8 +175,8 @@ if [ "$choice" == "0" ]; then
 
         
     # Run the piped commands and store the output in a variable
-    veracode-http -o .sbom/applications.json "https://api.veracode.com/appsec/v1/applications"
-    idoutput=$(cat .sbom/applications.json | jq -r '._embedded.applications[].guid' )
+    veracode-http -o $OUTPUT_DIR/applications.json "https://api.veracode.com/appsec/v1/applications"
+    idoutput=$(cat $OUTPUT_DIR/applications.json | jq -r '._embedded.applications[].guid' )
 
     # Initialize an empty Bash array
     my_array=()
@@ -184,7 +196,7 @@ if [ "$choice" == "0" ]; then
     fi
 
     # Run the piped commands and store the output in a variable
-    nameoutput=$(cat .sbom/applications.json | jq -r '._embedded.applications[].profile.name')
+    nameoutput=$(cat $OUTPUT_DIR/applications.json | jq -r '._embedded.applications[].profile.name')
 
     # Initialize an empty Bash array
     my_arrayy=()
@@ -242,16 +254,16 @@ if [ "$choice" == "0" ]; then
 
     # populate the next set of options array
 
-    veracode-http -o .sbom/"${my_array[$choice]}" "https://api.veracode.com/srcclr/sbom/v1/targets/${my_array[$choice]}/cyclonedx?type=application"
-    echo "CycloneDx SBOM written to .sbom/${my_array[$choice]}.json"
+    veracode-http -o $OUTPUT_DIR/"${my_array[$choice]}" "https://api.veracode.com/srcclr/sbom/v1/targets/${my_array[$choice]}/cyclonedx?type=application"
+    echo "CycloneDx SBOM written to $OUTPUT_DIR/${my_array[$choice]}.json"
     #cd -f
 
 elif [ "$choice" == "1" ]; then
     echo "Agent Based SBOM"
         
     # Run the piped commands and store the output in a variable
-    veracode-http -o .sbom/workspaces.json "https://api.veracode.com/srcclr/v3/workspaces"
-    idoutput=$(cat .sbom/workspaces.json | jq -r '._embedded.workspaces' | grep -i '"id":' | cut -d '"' -f4)
+    veracode-http -o $OUTPUT_DIR/workspaces.json "https://api.veracode.com/srcclr/v3/workspaces"
+    idoutput=$(cat $OUTPUT_DIR/workspaces.json | jq -r '._embedded.workspaces' | grep -i '"id":' | cut -d '"' -f4)
 
     # Initialize an empty Bash array
     my_array=()
@@ -271,7 +283,7 @@ elif [ "$choice" == "1" ]; then
     fi
 
     # Run the piped commands and store the output in a variable
-    nameoutput=$(cat .sbom/workspaces.json | jq -r '._embedded.workspaces' | grep -i '"name":' | cut -d '"' -f4)
+    nameoutput=$(cat $OUTPUT_DIR/workspaces.json | jq -r '._embedded.workspaces' | grep -i '"name":' | cut -d '"' -f4)
 
     # Initialize an empty Bash array
     my_arrayy=()
@@ -329,16 +341,16 @@ elif [ "$choice" == "1" ]; then
 
     # populate the next set of options array
 
-    veracode-http -o .sbom/projects.json "https://api.veracode.com/srcclr/v3/workspaces/${my_array[$choice]}/projects?type=agent"
+    veracode-http -o $OUTPUT_DIR/projects.json "https://api.veracode.com/srcclr/v3/workspaces/${my_array[$choice]}/projects?type=agent"
 
     if [ "$DEBUG" == "1" ]; then
 
-    cat .sbom/projects.json | jq -r '._embedded.projects' | grep -i '"name":' -F | cut -d '"' -f4
+    cat $OUTPUT_DIR/projects.json | jq -r '._embedded.projects' | grep -i '"name":' -F | cut -d '"' -f4
 
     fi
 
     # Run the piped commands and store the output in a variable
-    idoutput=$(cat .sbom/projects.json | jq -r '._embedded.projects' | grep -i '"id":' | cut -d '"' -f4)
+    idoutput=$(cat $OUTPUT_DIR/projects.json | jq -r '._embedded.projects' | grep -i '"id":' | cut -d '"' -f4)
 
     # Initialize an empty Bash array
     my_array=()
@@ -361,7 +373,7 @@ elif [ "$choice" == "1" ]; then
     fi
 
     # Run the piped commands and store the output in a variable
-    nameoutput=$(cat .sbom/projects.json | jq -r '._embedded.projects' | grep -i '"name":' | cut -d '"' -f4)
+    nameoutput=$(cat $OUTPUT_DIR/projects.json | jq -r '._embedded.projects' | grep -i '"name":' | cut -d '"' -f4)
 
     # Initialize an empty Bash array
     my_arrayy=()
@@ -414,8 +426,8 @@ elif [ "$choice" == "1" ]; then
     ######################################################################
 
 
-    veracode-http -o .sbom/"${my_array[$choice]}".json "https://api.veracode.com/srcclr/sbom/v1/targets/${my_array[$choice]}/cyclonedx?type=agent"
+    veracode-http -o $OUTPUT_DIR/"${my_array[$choice]}".json "https://api.veracode.com/srcclr/sbom/v1/targets/${my_array[$choice]}/cyclonedx?type=agent"
 
-    echo "CycloneDx SBOM written to .sbom/${my_array[$choice]}.json"
+    echo "CycloneDx SBOM written to $OUTPUT_DIR/${my_array[$choice]}.json"
     #cd -f
 fi
