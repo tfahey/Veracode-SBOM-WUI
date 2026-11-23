@@ -9,6 +9,8 @@
 #    gilmore867 : https://github.com/gilmore867/Veracode-SBOM-GUI
 # This version does not use docker containers
 
+IFS=$'\n\t'
+
 readonly VERSION="v2.1.2"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly OUTPUT_DIR="${SCRIPT_DIR}/.sbom"
@@ -235,11 +237,11 @@ sbom_type_options[1]="Agent Based SBOM"
 select_option "${sbom_type_options[@]}"
 choice=$?
 
-echo "Choosen index = $choice"
+echo "Chosen index = $choice"
 echo "        value = ${sbom_type_options[$choice]}"
 
 if [ "$choice" == "0" ]; then
-    echo "Application Prfoile SBOM"
+    echo "Application Profile SBOM"
 
         
     # Run the piped commands and store the output in a variable
@@ -315,7 +317,7 @@ if [ "$choice" == "0" ]; then
     select_option "${options[@]}"
     choice=$?
 
-    echo "Choosen index = $choice"
+    echo "Chosen index = $choice"
     echo "        value = ${options[$choice]}"
 
 
@@ -402,7 +404,7 @@ elif [ "$choice" == "1" ]; then
     select_option "${options[@]}"
     choice=$?
 
-    echo "Choosen index = $choice"
+    echo "Chosen index = $choice"
     echo "        value = ${options[$choice]}"
 
 
@@ -484,7 +486,7 @@ elif [ "$choice" == "1" ]; then
     select_option "${options[@]}"
     choice=$?
 
-    echo "Choosen index = $choice"
+    echo "Chosen index = $choice"
     echo "        value = ${options[$choice]}"
 
     #####################################################################
